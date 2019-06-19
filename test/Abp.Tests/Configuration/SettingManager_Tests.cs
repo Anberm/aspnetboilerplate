@@ -9,6 +9,8 @@ using Abp.Runtime.Caching.Memory;
 using Abp.Runtime.Remoting;
 using Abp.Runtime.Session;
 using Abp.TestBase.Runtime.Session;
+using Abp.Tests.MultiTenancy;
+using JetBrains.Annotations;
 using NSubstitute;
 using Shouldly;
 using Xunit;
@@ -17,9 +19,16 @@ namespace Abp.Tests.Configuration
 {
     public class SettingManager_Tests : TestBaseWithLocalIocManager
     {
+        private enum MyEnumSettingType
+        {
+            Setting1 = 0,
+            Setting2 = 1,
+        }
+
         private const string MyAppLevelSetting = "MyAppLevelSetting";
         private const string MyAllLevelsSetting = "MyAllLevelsSetting";
         private const string MyNotInheritedSetting = "MyNotInheritedSetting";
+        private const string MyEnumTypeSetting = "MyEnumTypeSetting";
 
         private SettingManager CreateSettingManager(bool multiTenancyIsEnabled = true)
         {
@@ -32,7 +41,7 @@ namespace Abp.Tests.Configuration
                 new MultiTenancyConfig
                 {
                     IsEnabled = multiTenancyIsEnabled
-                });
+                }, new TestTenantStore());
         }
 
         [Fact]
@@ -88,6 +97,8 @@ namespace Abp.Tests.Configuration
             (await settingManager.GetSettingValueForApplicationAsync(MyNotInheritedSetting)).ShouldBe("application value");
             (await settingManager.GetSettingValueForTenantAsync(MyNotInheritedSetting, session.TenantId.Value)).ShouldBe("default-value");
             (await settingManager.GetSettingValueAsync(MyNotInheritedSetting)).ShouldBe("default-value");
+
+            (await settingManager.GetSettingValueAsync<MyEnumSettingType>(MyEnumTypeSetting)).ShouldBe(MyEnumSettingType.Setting1);
         }
 
         [Fact]
@@ -96,7 +107,7 @@ namespace Abp.Tests.Configuration
             var settingManager = CreateSettingManager();
             settingManager.SettingStore = new MemorySettingStore();
 
-            (await settingManager.GetAllSettingValuesAsync()).Count.ShouldBe(3);
+            (await settingManager.GetAllSettingValuesAsync()).Count.ShouldBe(4);
 
             (await settingManager.GetAllSettingValuesForApplicationAsync()).Count.ShouldBe(3);
 
@@ -201,6 +212,47 @@ namespace Abp.Tests.Configuration
             value.ShouldBe("53");
         }
 
+        [Fact]
+        public async Task Should_Get_Tenant_Setting_For_Application_Level_Setting_When_Multi_Tenancy_Is_Disabled()
+        {
+            // Arrange
+            var session = CreateTestAbpSession(multiTenancyIsEnabled: false);
+
+            var settingManager = CreateSettingManager(multiTenancyIsEnabled: false);
+            settingManager.SettingStore = new MemorySettingStore();
+            settingManager.AbpSession = session;
+
+            // Act
+            await settingManager.ChangeSettingForApplicationAsync(MyAllLevelsSetting, "53");
+
+            // Assert
+            var value = await settingManager.GetSettingValueForApplicationAsync(MyAllLevelsSetting);
+            value.ShouldBe("53");
+        }
+
+        [Fact]
+        public async Task Should_Change_Setting_Value_When_Multi_Tenancy_Is_Disabled()
+        {
+            // Arrange
+            var session = CreateTestAbpSession(multiTenancyIsEnabled: false);
+
+            var settingManager = CreateSettingManager(multiTenancyIsEnabled: false);
+            settingManager.SettingStore = new MemorySettingStore();
+            settingManager.AbpSession = session;
+
+            //change setting value with "B"
+            await settingManager.ChangeSettingForApplicationAsync(MyAppLevelSetting, "B");
+
+            // it's ok
+            ( await settingManager.GetSettingValueForApplicationAsync(MyAppLevelSetting) ).ShouldBe("B");
+
+            //change setting with same value "B" again,
+            await settingManager.ChangeSettingForApplicationAsync(MyAppLevelSetting, "B");
+
+            //but was "A" ,that's wrong
+            ( await settingManager.GetSettingValueForApplicationAsync(MyAppLevelSetting) ).ShouldBe("B");
+        }
+
         private static TestAbpSession CreateTestAbpSession(bool multiTenancyIsEnabled = true)
         {
             return new TestAbpSession(
@@ -219,6 +271,7 @@ namespace Abp.Tests.Configuration
                 {MyAppLevelSetting, new SettingDefinition(MyAppLevelSetting, "42")},
                 {MyAllLevelsSetting, new SettingDefinition(MyAllLevelsSetting, "application level default value", scopes: SettingScopes.Application | SettingScopes.Tenant | SettingScopes.User)},
                 {MyNotInheritedSetting, new SettingDefinition(MyNotInheritedSetting, "default-value", scopes: SettingScopes.Application | SettingScopes.Tenant, isInherited: false)},
+                {MyEnumTypeSetting, new SettingDefinition(MyEnumTypeSetting, MyEnumSettingType.Setting1.ToString())},
             };
 
             var definitionManager = Substitute.For<ISettingDefinitionManager>();
